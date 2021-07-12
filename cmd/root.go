@@ -27,6 +27,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"sync"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
@@ -139,7 +140,9 @@ func filterInstances(out chan<- ec2.Instance) {
 }
 
 func executeCommand(in <-chan ec2.Instance, out chan<- string, cmd string) {
+	var wg sync.WaitGroup
 	for i := range in {
+		wg.Add(1)
 		privateIpAddress := *i.PrivateIpAddress
 
 		// Set instance identifier in output as the privateIpAddress by default
@@ -152,15 +155,22 @@ func executeCommand(in <-chan ec2.Instance, out chan<- string, cmd string) {
 			}
 		}
 
-		// Run ssh using exec instead of go lib so OpenSSH configs (~/.ssh/config) are used
-		cmd := exec.Command("ssh", privateIpAddress, cmd)
-		var stdoutBuf bytes.Buffer
-		cmd.Stdout = &stdoutBuf
-		// not checking err here so a single ec2 instance failure doesn't cancel on the remaining
-		cmd.Run()
-		out <- fmt.Sprintf("[%s]:\n%s", instance, stdoutBuf.String())
+		go func(instance string, privateIpAddress string, o chan<- string) {
+			defer wg.Done()
+			// Run ssh using exec instead of go lib so OpenSSH configs (~/.ssh/config) are used
+			cmd := exec.Command("ssh", privateIpAddress, cmd)
+			var stdoutBuf bytes.Buffer
+			cmd.Stdout = &stdoutBuf
+			// not checking err here so a single ec2 instance failure doesn't cancel on the remaining
+			cmd.Run()
+			o <- fmt.Sprintf("[%s]:\n%s", instance, stdoutBuf.String())
+		}(instance, privateIpAddress, out)
 	}
-	close(out)
+
+	go func() {
+		wg.Wait()
+		close(out)
+	}()
 }
 
 func printOutput(in <-chan string) {
