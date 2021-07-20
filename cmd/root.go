@@ -38,6 +38,7 @@ import (
 
 var cfgFile string
 var filterMap map[string]string
+var insecure bool
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
@@ -73,15 +74,10 @@ func Execute() {
 func init() {
 	cobra.OnInitialize(initConfig)
 
-	// Here you will define your flags and configuration settings.
-	// Cobra supports persistent flags, which, if defined here,
-	// will be global for your application.
-
+	// Only using PersistentFlags since the CLI has no subcommands
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.ec2-cmd.yaml)")
-
-	// Cobra also supports local flags, which will only run
-	// when this action is called directly.
-	rootCmd.Flags().StringToStringVarP(&filterMap, "filter", "f", nil, "filters in the form of Key=Value")
+	rootCmd.PersistentFlags().StringToStringVarP(&filterMap, "filter", "f", nil, "filters in the form of Key=Value")
+	rootCmd.PersistentFlags().BoolVarP(&insecure, "insecure", "i", false, "disable host key checks on ssh invocation (which is a security risk!)")
 }
 
 // initConfig reads in config file and ENV variables if set.
@@ -155,10 +151,19 @@ func executeCommand(in <-chan ec2.Instance, out chan<- string, cmd string) {
 			}
 		}
 
+		// construct the args passed to SSH
+		var sshArgs []string
+		if insecure {
+			sshArgs = append(sshArgs, "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "LogLevel=ERROR")
+		}
+
 		go func(instance string, privateIpAddress string, o chan<- string) {
 			defer wg.Done()
+
+			sshArgs = append(sshArgs, privateIpAddress, cmd)
+
 			// Run ssh using exec instead of go lib so OpenSSH configs (~/.ssh/config) are used
-			cmd := exec.Command("ssh", privateIpAddress, cmd)
+			cmd := exec.Command("ssh", sshArgs...)
 			var stdoutBuf bytes.Buffer
 			cmd.Stdout = &stdoutBuf
 			// not checking err here so a single ec2 instance failure doesn't cancel on the remaining
