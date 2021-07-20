@@ -39,6 +39,7 @@ import (
 var cfgFile string
 var filterMap map[string]string
 var insecure bool
+var region string
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
@@ -78,6 +79,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.ec2-cmd.yaml)")
 	rootCmd.PersistentFlags().StringToStringVarP(&filterMap, "filter", "f", nil, "filters in the form of Key=Value")
 	rootCmd.PersistentFlags().BoolVarP(&insecure, "insecure", "i", false, "disable host key checks on ssh invocation (which is a security risk!)")
+	rootCmd.PersistentFlags().StringVarP(&region, "region", "r", "", "set the AWS region (default: value of AWS_REGION environment variable if set)")
 }
 
 // initConfig reads in config file and ENV variables if set.
@@ -96,6 +98,8 @@ func initConfig() {
 		viper.SetConfigName(".ec2-cmd")
 	}
 
+	// Bind region to AWS_REGION environment variable
+	viper.BindEnv("region", "AWS_REGION")
 	viper.AutomaticEnv() // read in environment variables that match
 
 	// If a config file is found, read it in.
@@ -105,7 +109,9 @@ func initConfig() {
 }
 
 func filterInstances(out chan<- ec2.Instance) {
-	session := session.Must(session.NewSession())
+	session := session.Must(session.NewSession(&aws.Config{
+		Region: aws.String(region),
+	}))
 
 	ec2svc := ec2.New(session)
 
