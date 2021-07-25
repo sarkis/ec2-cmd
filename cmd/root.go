@@ -62,7 +62,7 @@ var rootCmd = &cobra.Command{
 		// TODO: make the buffer size configurable, this will
 		// determine maximum ssh sessions to run in parallel
 		// set at 10 for now
-		workers := make(chan struct{}, 25)
+		workers := make(chan struct{}, 10)
 
 		var wg sync.WaitGroup
 		wg.Add(len(instances))
