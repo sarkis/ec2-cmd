@@ -52,18 +52,32 @@ var rootCmd = &cobra.Command{
 		`,
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
+		// pipeline of goroutines using unidirectional channels for communication
+		// filterInstances -> executeCommand -> printOutput
+		instances, err := filterInstances(filterMap)
+		if err != nil {
+			log.Fatalf("failed while filtering instances: %s", err)
+		}
+
 		// TODO: make the buffer size configurable, this will
 		// determine maximum ssh sessions to run in parallel
 		// set at 10 for now
-		instances := make(chan ec2.Instance, 10)
-		output := make(chan string, 10)
-		workers := make(chan struct{}, 10)
+		workers := make(chan struct{}, 25)
 
-		// pipeline of goroutines using unidirectional channels for communication
-		// filterInstances -> executeCommand -> printOutput
-		go filterInstances(instances)
-		go executeCommand(instances, output, workers, args[0])
-		printOutput(output)
+		var wg sync.WaitGroup
+		wg.Add(len(instances))
+
+		// construct the args passed to SSH
+		var sshArgs []string
+		if insecure {
+			sshArgs = append(sshArgs, "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "LogLevel=ERROR")
+		}
+
+		for _, instance := range instances {
+			go executeCommand(instance, workers, &wg, region, insecure, sshArgs, args[0])
+		}
+
+		wg.Wait()
 	},
 }
 
@@ -109,7 +123,7 @@ func initConfig() {
 	}
 }
 
-func filterInstances(out chan<- ec2.Instance) {
+func filterInstances(filters map[string]string) ([]ec2.Instance, error) {
 	session := session.Must(session.NewSession(&aws.Config{
 		Region: aws.String(region),
 	}))
@@ -117,84 +131,59 @@ func filterInstances(out chan<- ec2.Instance) {
 	ec2svc := ec2.New(session)
 
 	// Add filters for describe instances call from flag
-	var filters []*ec2.Filter
+	var ec2Filters []*ec2.Filter
 	for k, v := range filterMap {
-		filters = append(filters, &ec2.Filter{
+		ec2Filters = append(ec2Filters, &ec2.Filter{
 			Name:   aws.String(k),
 			Values: []*string{aws.String(v)},
 		})
 	}
 
 	params := &ec2.DescribeInstancesInput{
-		Filters: filters,
+		Filters: ec2Filters,
 	}
+
+	var ec2Instances []ec2.Instance
 
 	resp, err := ec2svc.DescribeInstances(params)
 	if err != nil {
-		fmt.Println("there was an error listing instances in", err.Error())
-		log.Fatal(err.Error())
+		return nil, err
 	}
+
 	for idx := range resp.Reservations {
 		for _, inst := range resp.Reservations[idx].Instances {
-			out <- *inst
+			ec2Instances = append(ec2Instances, *inst)
 		}
 	}
-	close(out)
+
+	return ec2Instances, nil
 }
 
-func executeCommand(in <-chan ec2.Instance, out chan<- string, workers chan struct{}, cmd string) {
-	var wg sync.WaitGroup
-	for i := range in {
-		wg.Add(1)
-		privateIpAddress := *i.PrivateIpAddress
+func executeCommand(instance ec2.Instance, workers chan struct{}, wg *sync.WaitGroup, region string, insecure bool, sshArgs []string, cmd string) {
+	// use workers channel as a concurrency limiter
+	workers <- struct{}{}
+	defer wg.Done()
 
-		// Set instance identifier in output as the privateIpAddress by default
-		instance := privateIpAddress
+	sshArgs = append(sshArgs, *instance.PrivateIpAddress, cmd)
 
-		// If there is a Name set on the ec2 instance use that as the identifier instead
-		for _, t := range i.Tags {
-			if *t.Key == "Name" {
-				instance = *t.Value
-			}
+	instanceName := *instance.PrivateIpAddress
+	// If there is a Name set on the ec2 instance use that as the identifier instead
+	for _, t := range instance.Tags {
+		if *t.Key == "Name" {
+			instanceName = *t.Value
 		}
-
-		// construct the args passed to SSH
-		var sshArgs []string
-		if insecure {
-			sshArgs = append(sshArgs, "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "LogLevel=ERROR")
-		}
-
-		go func(instance string, privateIpAddress string, o chan<- string) {
-			defer wg.Done()
-
-			// use workers channel as a concurrency limiter
-			workers <- struct{}{}
-
-			sshArgs = append(sshArgs, privateIpAddress, cmd)
-
-			// Run ssh using exec instead of go lib so OpenSSH configs (~/.ssh/config) are used
-			cmd := exec.Command("ssh", sshArgs...)
-			fmt.Println(cmd)
-			var stdoutBuf bytes.Buffer
-			cmd.Stdout = &stdoutBuf
-			// not checking err here so a single ec2 instance failure doesn't cancel on the remaining
-			err := cmd.Run()
-			if err != nil {
-				fmt.Println(err)
-			}
-			o <- fmt.Sprintf("[%s]:\n%s", instance, stdoutBuf.String())
-			<-workers // free up a worker
-		}(instance, privateIpAddress, out)
 	}
 
-	go func() {
-		wg.Wait()
-		close(out)
-	}()
-}
-
-func printOutput(in <-chan string) {
-	for o := range in {
-		fmt.Println(o)
+	// Run ssh using exec instead of go lib so OpenSSH configs (~/.ssh/config) are used
+	sshCmd := exec.Command("ssh", sshArgs...)
+	var stdoutBuf bytes.Buffer
+	sshCmd.Stdout = &stdoutBuf
+	// not checking err here so a single ec2 instance failure doesn't cancel on the remaining
+	err := sshCmd.Run()
+	if err != nil {
+		fmt.Println(err)
 	}
+
+	fmt.Printf("[%s]:\n%s", instanceName, stdoutBuf.String())
+	<-workers // free up a worker
 }
