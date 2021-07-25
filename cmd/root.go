@@ -48,11 +48,11 @@ var rootCmd = &cobra.Command{
 	Long: `ec2-cmd is a CLI which takes in tags and values to filter on and
 		runs a command through SSH on the matching EC2 instances. Example usage:
 		
-		ec2-cmd --filter "tag:Name=dev-ec2-*" "uname -a"
+		ec2-cmd --insecure --region us-east-1 --filter "tag:Name=dev-*" "uname -a"
 		`,
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		instances, err := filterInstances(filterMap)
+		instances, err := filterInstances(region, filterMap)
 		if err != nil {
 			log.Fatalf("failed while filtering instances: %s", err)
 		}
@@ -72,7 +72,7 @@ var rootCmd = &cobra.Command{
 		}
 
 		for _, instance := range instances {
-			go executeCommand(instance, workers, &wg, region, insecure, sshArgs, args[0])
+			go executeCommand(instance, workers, &wg, sshArgs, args[0])
 		}
 
 		wg.Wait()
@@ -121,7 +121,7 @@ func initConfig() {
 	}
 }
 
-func filterInstances(filters map[string]string) ([]ec2.Instance, error) {
+func filterInstances(region string, filters map[string]string) ([]ec2.Instance, error) {
 	session := session.Must(session.NewSession(&aws.Config{
 		Region: aws.String(region),
 	}))
@@ -157,7 +157,7 @@ func filterInstances(filters map[string]string) ([]ec2.Instance, error) {
 	return ec2Instances, nil
 }
 
-func executeCommand(instance ec2.Instance, workers chan struct{}, wg *sync.WaitGroup, region string, insecure bool, sshArgs []string, cmd string) {
+func executeCommand(instance ec2.Instance, workers chan struct{}, wg *sync.WaitGroup, sshArgs []string, cmd string) {
 	// use workers channel as a concurrency limiter
 	workers <- struct{}{}
 	defer wg.Done()
@@ -176,7 +176,8 @@ func executeCommand(instance ec2.Instance, workers chan struct{}, wg *sync.WaitG
 	sshCmd := exec.Command("ssh", sshArgs...)
 	var stdoutBuf bytes.Buffer
 	sshCmd.Stdout = &stdoutBuf
-	// not checking err here so a single ec2 instance failure doesn't cancel on the remaining
+
+	// print error but do not return so other instances will execute the command
 	err := sshCmd.Run()
 	if err != nil {
 		fmt.Println(err)
