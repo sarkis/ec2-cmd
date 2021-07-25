@@ -57,11 +57,12 @@ var rootCmd = &cobra.Command{
 		// set at 10 for now
 		instances := make(chan ec2.Instance, 10)
 		output := make(chan string, 10)
+		workers := make(chan struct{}, 10)
 
 		// pipeline of goroutines using unidirectional channels for communication
 		// filterInstances -> executeCommand -> printOutput
 		go filterInstances(instances)
-		go executeCommand(instances, output, args[0])
+		go executeCommand(instances, output, workers, args[0])
 		printOutput(output)
 	},
 }
@@ -141,7 +142,7 @@ func filterInstances(out chan<- ec2.Instance) {
 	close(out)
 }
 
-func executeCommand(in <-chan ec2.Instance, out chan<- string, cmd string) {
+func executeCommand(in <-chan ec2.Instance, out chan<- string, workers chan struct{}, cmd string) {
 	var wg sync.WaitGroup
 	for i := range in {
 		wg.Add(1)
@@ -166,15 +167,23 @@ func executeCommand(in <-chan ec2.Instance, out chan<- string, cmd string) {
 		go func(instance string, privateIpAddress string, o chan<- string) {
 			defer wg.Done()
 
+			// use workers channel as a concurrency limiter
+			workers <- struct{}{}
+
 			sshArgs = append(sshArgs, privateIpAddress, cmd)
 
 			// Run ssh using exec instead of go lib so OpenSSH configs (~/.ssh/config) are used
 			cmd := exec.Command("ssh", sshArgs...)
+			fmt.Println(cmd)
 			var stdoutBuf bytes.Buffer
 			cmd.Stdout = &stdoutBuf
 			// not checking err here so a single ec2 instance failure doesn't cancel on the remaining
-			cmd.Run()
+			err := cmd.Run()
+			if err != nil {
+				fmt.Println(err)
+			}
 			o <- fmt.Sprintf("[%s]:\n%s", instance, stdoutBuf.String())
+			<-workers // free up a worker
 		}(instance, privateIpAddress, out)
 	}
 
