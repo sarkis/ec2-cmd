@@ -12,10 +12,13 @@ See tools like [aws-vault](https://github.com/99designs/aws-vault) if you need t
 
 # Usage
 ```
+Usage:
   ec2-cmd [flags] COMMAND
 
-Flags:
-      --config string           config file (default is $HOME/.ec2-cmd.yaml)
-  -f, --filter stringToString   filters in the form of Key=Value (default [])
-  -h, --help                    help for ec2-cmd
+  Flags:
+        --config string           config file (default is $HOME/.ec2-cmd.yaml)
+    -f, --filter stringToString   filters in the form of Key=Value (default [])
+    -h, --help                    help for ec2-cmd
+      -i, --insecure                disable host key checks on ssh invocation (which is a security risk!)
+    -r, --region string           set the AWS region (default: value of AWS_REGION environment variable if set)
 ```
