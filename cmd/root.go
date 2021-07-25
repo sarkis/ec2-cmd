@@ -52,8 +52,6 @@ var rootCmd = &cobra.Command{
 		`,
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		// pipeline of goroutines using unidirectional channels for communication
-		// filterInstances -> executeCommand -> printOutput
 		instances, err := filterInstances(filterMap)
 		if err != nil {
 			log.Fatalf("failed while filtering instances: %s", err)
@@ -184,6 +182,6 @@ func executeCommand(instance ec2.Instance, workers chan struct{}, wg *sync.WaitG
 		fmt.Println(err)
 	}
 
-	fmt.Printf("[%s]:\n%s", instanceName, stdoutBuf.String())
+	fmt.Printf("[%s]:\n%s\n", instanceName, stdoutBuf.String())
 	<-workers // free up a worker
 }
