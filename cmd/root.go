@@ -174,7 +174,6 @@ func executeCommand(in <-chan ec2.Instance, out chan<- string, workers chan stru
 
 			// Run ssh using exec instead of go lib so OpenSSH configs (~/.ssh/config) are used
 			cmd := exec.Command("ssh", sshArgs...)
-			fmt.Println(cmd)
 			var stdoutBuf bytes.Buffer
 			cmd.Stdout = &stdoutBuf
 			// not checking err here so a single ec2 instance failure doesn't cancel on the remaining
