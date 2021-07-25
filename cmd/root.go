@@ -40,6 +40,7 @@ var cfgFile string
 var filterMap map[string]string
 var insecure bool
 var region string
+var parallel int
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
@@ -60,7 +61,7 @@ var rootCmd = &cobra.Command{
 		// TODO: make the buffer size configurable, this will
 		// determine maximum ssh sessions to run in parallel
 		// set at 10 for now
-		workers := make(chan struct{}, 10)
+		workers := make(chan struct{}, parallel)
 
 		var wg sync.WaitGroup
 		wg.Add(len(instances))
@@ -88,10 +89,12 @@ func Execute() {
 func init() {
 	cobra.OnInitialize(initConfig)
 
+	// TODO: need validation for flags
 	// Only using PersistentFlags since the CLI has no subcommands
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.ec2-cmd.yaml)")
 	rootCmd.PersistentFlags().StringToStringVarP(&filterMap, "filter", "f", nil, "filters in the form of Key=Value")
 	rootCmd.PersistentFlags().BoolVarP(&insecure, "insecure", "i", false, "disable host key checks on ssh invocation (which is a security risk!)")
+	rootCmd.PersistentFlags().IntVarP(&parallel, "parallel", "p", 10, "number of parallel executions (default: 10)")
 	rootCmd.PersistentFlags().StringVarP(&region, "region", "r", "", "set the AWS region (default: value of AWS_REGION environment variable if set)")
 }
 
